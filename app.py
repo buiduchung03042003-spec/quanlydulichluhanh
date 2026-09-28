@@ -51,7 +51,41 @@ def init_db():
         cost REAL DEFAULT 0,
         status TEXT DEFAULT 'Đang bán',
         description TEXT,
+        tour_type TEXT DEFAULT 'Tour trọn gói',
+        category TEXT DEFAULT 'Nội địa',
+        departure_point TEXT,
+        itinerary TEXT,
+        transport TEXT,
+        hotel_standard TEXT,
+        meals TEXT,
+        included TEXT,
+        excluded TEXT,
+        child_price REAL DEFAULT 0,
+        infant_price REAL DEFAULT 0,
+        single_supplement REAL DEFAULT 0,
+        min_pax INTEGER DEFAULT 1,
+        booking_deadline TEXT,
+        cancellation_policy TEXT,
+        meeting_point TEXT,
+        contact_name TEXT,
+        contact_phone TEXT,
+        contact_email TEXT,
+        image_url TEXT,
+        notes TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS tour_days(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tour_id INTEGER NOT NULL,
+        day_no INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        activities TEXT,
+        meals TEXT,
+        hotel TEXT,
+        distance TEXT,
+        notes TEXT,
+        FOREIGN KEY(tour_id) REFERENCES tours(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS customers(
@@ -151,6 +185,43 @@ def init_db():
     conn.close()
 
 init_db()
+
+# -------------------- DATABASE MIGRATION ----------------------
+def ensure_tour_columns():
+    """Tự động bổ sung các trường Tour mới cho CSDL cũ."""
+    conn = get_conn()
+    cur = conn.cursor()
+    existing = {row[1] for row in cur.execute("PRAGMA table_info(tours)").fetchall()}
+    columns = {
+        "tour_type": "TEXT DEFAULT 'Tour trọn gói'",
+        "category": "TEXT DEFAULT 'Nội địa'",
+        "departure_point": "TEXT",
+        "itinerary": "TEXT",
+        "transport": "TEXT",
+        "hotel_standard": "TEXT",
+        "meals": "TEXT",
+        "included": "TEXT",
+        "excluded": "TEXT",
+        "child_price": "REAL DEFAULT 0",
+        "infant_price": "REAL DEFAULT 0",
+        "single_supplement": "REAL DEFAULT 0",
+        "min_pax": "INTEGER DEFAULT 1",
+        "booking_deadline": "TEXT",
+        "cancellation_policy": "TEXT",
+        "meeting_point": "TEXT",
+        "contact_name": "TEXT",
+        "contact_phone": "TEXT",
+        "contact_email": "TEXT",
+        "image_url": "TEXT",
+        "notes": "TEXT",
+    }
+    for name, definition in columns.items():
+        if name not in existing:
+            cur.execute(f"ALTER TABLE tours ADD COLUMN {name} {definition}")
+    conn.commit()
+    conn.close()
+
+ensure_tour_columns()
 
 # ------------------------- HELPERS ----------------------------
 def q(sql, params=(), one=False):
@@ -306,46 +377,265 @@ if menu == "📊 Tổng quan":
 # --------------------------- TOURS -----------------------------
 elif menu == "🗺️ Tour":
     st.title("🗺️ Quản lý Tour")
-    with st.expander("➕ Tạo tour mới", expanded=False):
-        with st.form("tour_form"):
-            c1,c2,c3 = st.columns(3)
-            name = c1.text_input("Tên tour *")
-            destination = c2.text_input("Điểm đến *")
-            departure = c3.date_input("Ngày khởi hành", value=date.today())
-            c1,c2,c3,c4 = st.columns(4)
-            return_date = c1.date_input("Ngày kết thúc", value=date.today())
-            duration = c2.text_input("Thời lượng", "3N2Đ")
-            capacity = c3.number_input("Sức chứa", min_value=1, value=45)
-            price = c4.number_input("Giá bán/người", min_value=0.0, step=100000.0)
-            cost = st.number_input("Giá vốn/người", min_value=0.0, step=100000.0)
-            status = st.selectbox("Trạng thái", ["Đang bán","Tạm dừng","Đã kết thúc","Nháp"])
-            description = st.text_area("Mô tả")
-            submit = st.form_submit_button("Lưu tour", type="primary")
+    st.caption("Hồ sơ tour mở rộng: thông tin sản phẩm, lịch trình, dịch vụ, giá, điều kiện và liên hệ.")
+
+    tab1, tab2, tab3 = st.tabs(["➕ Tạo / cập nhật Tour", "📋 Danh sách Tour", "🗓️ Lịch trình từng ngày"])
+
+    # --------------------- CREATE TOUR ---------------------
+    with tab1:
+        with st.form("tour_form", clear_on_submit=True):
+            st.subheader("1. Thông tin cơ bản")
+            c1, c2, c3 = st.columns(3)
+            name = c1.text_input("Tên tour *", placeholder="VD: Vũng Tàu - Đà Lạt 3N2Đ")
+            tour_type = c2.selectbox("Loại tour", [
+                "Tour trọn gói", "Tour ghép đoàn", "Tour riêng",
+                "Tour MICE", "Team Building", "Inbound", "Outbound"
+            ])
+            category = c3.selectbox("Thị trường", ["Nội địa", "Quốc tế", "Inbound", "Outbound"])
+
+            c1, c2, c3 = st.columns(3)
+            destination = c1.text_input("Điểm đến chính *", placeholder="Đà Lạt, Nha Trang...")
+            departure_point = c2.text_input("Điểm khởi hành", placeholder="Vũng Tàu / TP.HCM")
+            meeting_point = c3.text_input("Điểm tập trung", placeholder="Bến xe / văn phòng / khách sạn")
+
+            c1, c2, c3, c4 = st.columns(4)
+            departure = c1.date_input("Ngày khởi hành", value=date.today())
+            return_date = c2.date_input("Ngày kết thúc", value=date.today())
+            duration = c3.text_input("Thời lượng", "3N2Đ")
+            capacity = c4.number_input("Sức chứa tối đa", min_value=1, value=45, step=1)
+
+            c1, c2, c3 = st.columns(3)
+            min_pax = c1.number_input("Số khách tối thiểu", min_value=1, value=1)
+            booking_deadline = c2.date_input("Hạn chốt booking", value=date.today())
+            status = c3.selectbox("Trạng thái", ["Đang bán", "Tạm dừng", "Đã kết thúc", "Nháp", "Hết chỗ"])
+
+            st.subheader("2. Giá tour")
+            c1, c2, c3, c4 = st.columns(4)
+            price = c1.number_input("Giá bán người lớn", min_value=0.0, step=100000.0)
+            cost = c2.number_input("Giá vốn người lớn", min_value=0.0, step=100000.0)
+            child_price = c3.number_input("Giá trẻ em", min_value=0.0, step=100000.0)
+            infant_price = c4.number_input("Giá em bé", min_value=0.0, step=50000.0)
+            single_supplement = st.number_input("Phụ thu phòng đơn", min_value=0.0, step=100000.0)
+
+            st.subheader("3. Dịch vụ tour")
+            c1, c2 = st.columns(2)
+            transport = c1.text_input("Phương tiện", placeholder="Xe 29 chỗ, máy bay, tàu...")
+            hotel_standard = c2.text_input("Tiêu chuẩn lưu trú", placeholder="3★ / 4★ / 5★ / Homestay")
+            meals = st.text_area("Ăn uống", placeholder="Bữa sáng ngày 1-3; trưa ngày 1-2; tối ngày 1-2...")
+            c1, c2 = st.columns(2)
+            included = c1.text_area("Dịch vụ bao gồm", placeholder="Xe, khách sạn, ăn uống, vé tham quan, HDV, bảo hiểm...")
+            excluded = c2.text_area("Dịch vụ không bao gồm", placeholder="VAT, đồ uống, chi phí cá nhân, phụ thu phòng đơn...")
+
+            st.subheader("4. Nội dung & điều kiện")
+            itinerary = st.text_area(
+                "Tóm tắt hành trình",
+                placeholder="Ngày 1: ...\nNgày 2: ...\nNgày 3: ..."
+            )
+            cancellation_policy = st.text_area(
+                "Điều kiện hủy / đổi tour",
+                placeholder="Quy định đặt cọc, hủy trước ngày khởi hành, đổi tên..."
+            )
+            description = st.text_area("Mô tả / giới thiệu tour", placeholder="Giới thiệu sản phẩm, điểm nổi bật...")
+            notes = st.text_area("Ghi chú nội bộ", placeholder="Lưu ý điều hành, yêu cầu đặc biệt...")
+
+            st.subheader("5. Thông tin liên hệ & hình ảnh")
+            c1, c2, c3 = st.columns(3)
+            contact_name = c1.text_input("Nhân viên phụ trách")
+            contact_phone = c2.text_input("Điện thoại tư vấn")
+            contact_email = c3.text_input("Email tư vấn")
+            image_url = st.text_input("Link hình ảnh đại diện (tùy chọn)")
+
+            submit = st.form_submit_button("💾 Lưu Tour", type="primary", use_container_width=True)
+
             if submit:
                 if not name.strip() or not destination.strip():
                     st.error("Tên tour và điểm đến là bắt buộc.")
+                elif return_date < departure:
+                    st.error("Ngày kết thúc không được trước ngày khởi hành.")
+                elif booking_deadline > departure:
+                    st.error("Hạn chốt booking không nên sau ngày khởi hành.")
+                elif min_pax > capacity:
+                    st.error("Số khách tối thiểu không được lớn hơn sức chứa.")
                 elif cost > price and price > 0:
-                    st.warning("Giá vốn đang cao hơn giá bán. Hãy kiểm tra lại.")
+                    st.warning("Giá vốn đang cao hơn giá bán. Vẫn có thể lưu nhưng cần kiểm tra lại.")
                 else:
-                    code = next_code("TOUR","tours")
-                    execute("""INSERT INTO tours(code,name,destination,departure,return_date,duration,
-                    capacity,price,cost,status,description) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                    (code,name,destination,str(departure),str(return_date),duration,capacity,price,cost,status,description))
-                    st.success(f"Đã tạo {code}")
+                    code = next_code("TOUR", "tours")
+                    tour_id = execute("""
+                        INSERT INTO tours(
+                            code,name,destination,departure,return_date,duration,capacity,
+                            price,cost,status,description,tour_type,category,departure_point,
+                            itinerary,transport,hotel_standard,meals,included,excluded,
+                            child_price,infant_price,single_supplement,min_pax,booking_deadline,
+                            cancellation_policy,meeting_point,contact_name,contact_phone,
+                            contact_email,image_url,notes
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (
+                        code, name.strip(), destination.strip(), str(departure), str(return_date),
+                        duration.strip(), int(capacity), float(price), float(cost), status,
+                        description, tour_type, category, departure_point, itinerary, transport,
+                        hotel_standard, meals, included, excluded, float(child_price),
+                        float(infant_price), float(single_supplement), int(min_pax),
+                        str(booking_deadline), cancellation_policy, meeting_point, contact_name,
+                        contact_phone, contact_email, image_url, notes
+                    ))
+                    st.success(f"Đã tạo tour {code}.")
+                    st.info("Bạn có thể sang tab 'Lịch trình từng ngày' để nhập chi tiết Day 1, Day 2, Day 3...")
                     st.rerun()
 
-    df = q("SELECT * FROM tours ORDER BY id DESC")
-    if not df.empty:
-        search = st.text_input("🔎 Tìm tour")
-        if search:
-            df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
-        show = df.copy()
-        show["Giá bán"] = show["price"].map(money)
-        show["Giá vốn"] = show["cost"].map(money)
-        st.dataframe(show[["code","name","destination","departure","return_date","capacity","Giá bán","Giá vốn","status"]], use_container_width=True)
-        st.download_button("⬇️ Xuất CSV", df.to_csv(index=False).encode("utf-8-sig"), "tours.csv","text/csv")
-    else:
-        st.info("Chưa có tour.")
+    # --------------------- TOUR LIST ---------------------
+    with tab2:
+        df = q("SELECT * FROM tours ORDER BY departure DESC, id DESC")
+        if not df.empty:
+            search = st.text_input("🔎 Tìm theo mã, tên tour, điểm đến, loại tour")
+            if search:
+                mask = df.astype(str).apply(
+                    lambda col: col.str.contains(search, case=False, na=False)
+                ).any(axis=1)
+                df = df[mask]
+
+            # Thống kê nhanh
+            a, b, c, d = st.columns(4)
+            a.metric("Tổng tour", len(df))
+            b.metric("Đang bán", int((df["status"] == "Đang bán").sum()))
+            c.metric("Nội địa", int((df["category"] == "Nội địa").sum()))
+            d.metric("Quốc tế", int((df["category"] == "Quốc tế").sum()))
+
+            show = df.copy()
+            show["Giá NL"] = show["price"].map(money)
+            show["Giá TE"] = show["child_price"].map(money)
+            show["Giá EB"] = show["infant_price"].map(money)
+            show["Giá vốn"] = show["cost"].map(money)
+
+            cols = [
+                "code", "name", "tour_type", "category", "departure_point",
+                "destination", "departure", "return_date", "duration",
+                "capacity", "min_pax", "Giá NL", "Giá TE", "Giá EB",
+                "hotel_standard", "transport", "status"
+            ]
+            available_cols = [x for x in cols if x in show.columns]
+            st.dataframe(show[available_cols], use_container_width=True, hide_index=True)
+
+            # Chi tiết tour
+            st.subheader("🔍 Xem chi tiết tour")
+            records = df.to_dict("records")
+            selected = st.selectbox(
+                "Chọn tour",
+                records,
+                format_func=lambda x: f"{x['code']} — {x['name']} — {x['destination']}"
+            )
+            if selected:
+                left, right = st.columns([1, 1])
+                with left:
+                    if selected.get("image_url"):
+                        st.image(selected["image_url"], caption=selected["name"], use_container_width=True)
+                    st.markdown(f"### {selected['name']}")
+                    st.write(f"**Mã tour:** {selected['code']}")
+                    st.write(f"**Loại:** {selected.get('tour_type','')}")
+                    st.write(f"**Thị trường:** {selected.get('category','')}")
+                    st.write(f"**Khởi hành:** {selected.get('departure_point','')}")
+                    st.write(f"**Điểm tập trung:** {selected.get('meeting_point','')}")
+                    st.write(f"**Điểm đến:** {selected.get('destination','')}")
+                    st.write(f"**Thời gian:** {selected.get('departure','')} → {selected.get('return_date','')} ({selected.get('duration','')})")
+                    st.write(f"**Phương tiện:** {selected.get('transport','')}")
+                    st.write(f"**Lưu trú:** {selected.get('hotel_standard','')}")
+                    st.write(f"**Trạng thái:** {selected.get('status','')}")
+                with right:
+                    st.markdown("### 💰 Bảng giá")
+                    st.write(f"Người lớn: **{money(selected.get('price',0))}**")
+                    st.write(f"Trẻ em: **{money(selected.get('child_price',0))}**")
+                    st.write(f"Em bé: **{money(selected.get('infant_price',0))}**")
+                    st.write(f"Phụ thu phòng đơn: **{money(selected.get('single_supplement',0))}**")
+                    st.write(f"Sức chứa: **{selected.get('capacity',0)} khách**")
+                    st.write(f"Tối thiểu: **{selected.get('min_pax',1)} khách**")
+                    st.write(f"Hạn chốt: **{selected.get('booking_deadline','')}**")
+                    st.markdown("### 🍽️ Ăn uống")
+                    st.write(selected.get("meals","") or "Chưa cập nhật")
+                    st.markdown("### ✅ Bao gồm")
+                    st.write(selected.get("included","") or "Chưa cập nhật")
+                    st.markdown("### ❌ Không bao gồm")
+                    st.write(selected.get("excluded","") or "Chưa cập nhật")
+
+                st.markdown("### 📝 Hành trình tóm tắt")
+                st.text(selected.get("itinerary","") or "Chưa cập nhật")
+                st.markdown("### 📌 Điều kiện hủy / đổi")
+                st.write(selected.get("cancellation_policy","") or "Chưa cập nhật")
+                st.markdown("### 📞 Liên hệ")
+                st.write(
+                    f"{selected.get('contact_name','')} | "
+                    f"{selected.get('contact_phone','')} | "
+                    f"{selected.get('contact_email','')}"
+                )
+
+            st.download_button(
+                "⬇️ Xuất danh sách tour CSV",
+                df.to_csv(index=False).encode("utf-8-sig"),
+                "tours_full.csv",
+                "text/csv"
+            )
+        else:
+            st.info("Chưa có tour.")
+
+    # --------------------- DAILY ITINERARY ---------------------
+    with tab3:
+        tours = q("SELECT id,code,name,duration FROM tours ORDER BY id DESC")
+        if tours.empty:
+            st.info("Hãy tạo tour trước khi nhập lịch trình.")
+        else:
+            tour = st.selectbox(
+                "Chọn tour để lập lịch trình",
+                tours.to_dict("records"),
+                format_func=lambda x: f"{x['code']} — {x['name']} ({x['duration']})"
+            )
+            st.subheader("➕ Thêm một ngày trong chương trình")
+            with st.form("tour_day_form"):
+                c1, c2 = st.columns(2)
+                day_no = c1.number_input("Ngày thứ", min_value=1, value=1, step=1)
+                title = c2.text_input("Tiêu đề ngày", placeholder="Ngày 1: Vũng Tàu → Đà Lạt")
+
+                activities = st.text_area(
+                    "Hoạt động / điểm tham quan",
+                    placeholder="06:00 tập trung...\n09:00 tham quan...\n12:00 ăn trưa..."
+                )
+                c1, c2, c3 = st.columns(3)
+                meals_day = c1.text_input("Bữa ăn", placeholder="Sáng / Trưa / Tối")
+                hotel_day = c2.text_input("Khách sạn", placeholder="Tên khách sạn")
+                distance = c3.text_input("Cự ly / thời gian di chuyển", placeholder="180 km / 4 giờ")
+                notes_day = st.text_area("Ghi chú ngày")
+                save_day = st.form_submit_button("💾 Lưu ngày", type="primary")
+
+                if save_day:
+                    if not title.strip():
+                        st.error("Tiêu đề ngày là bắt buộc.")
+                    else:
+                        execute("""
+                            INSERT INTO tour_days(
+                                tour_id,day_no,title,activities,meals,hotel,distance,notes
+                            ) VALUES(?,?,?,?,?,?,?,?)
+                        """, (
+                            tour["id"], int(day_no), title.strip(), activities,
+                            meals_day, hotel_day, distance, notes_day
+                        ))
+                        st.success(f"Đã thêm Ngày {day_no}.")
+                        st.rerun()
+
+            days = q(
+                "SELECT * FROM tour_days WHERE tour_id=? ORDER BY day_no,id",
+                (tour["id"],)
+            )
+            if not days.empty:
+                st.subheader("📅 Chương trình chi tiết")
+                for _, d in days.iterrows():
+                    with st.expander(f"Ngày {int(d['day_no'])}: {d['title']}", expanded=True):
+                        st.write("**Hoạt động:**")
+                        st.write(d["activities"] or "—")
+                        c1, c2, c3 = st.columns(3)
+                        c1.write(f"**Ăn uống:** {d['meals'] or '—'}")
+                        c2.write(f"**Khách sạn:** {d['hotel'] or '—'}")
+                        c3.write(f"**Di chuyển:** {d['distance'] or '—'}")
+                        st.write(f"**Ghi chú:** {d['notes'] or '—'}")
+            else:
+                st.info("Tour này chưa có lịch trình từng ngày.")
+
 
 # ------------------------ CUSTOMERS ----------------------------
 elif menu == "👥 Khách hàng":
@@ -598,7 +888,7 @@ elif menu == "💾 Sao lưu dữ liệu":
     st.subheader("Xuất dữ liệu Excel")
     output=io.BytesIO()
     with pd.ExcelWriter(output,engine="openpyxl") as writer:
-        for table in ["tours","customers","bookings","guides","suppliers","operations","transactions"]:
+        for table in ["tours","tour_days","customers","bookings","guides","suppliers","operations","transactions"]:
             q(f"SELECT * FROM {table}").to_excel(writer,index=False,sheet_name=table[:31])
     st.download_button("⬇️ Tải toàn bộ Excel",output.getvalue(),"lu_hanh_data.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -607,7 +897,7 @@ elif menu == "💾 Sao lưu dữ liệu":
 elif menu == "⚙️ Cài đặt":
     st.title("⚙️ Cài đặt hệ thống")
     st.subheader("Thông tin hệ thống")
-    st.write("**Phiên bản:** 1.0")
+    st.write("**Phiên bản:** 2.0 - Tour nâng cao")
     st.write("**Cơ sở dữ liệu:** SQLite")
     st.write("**Ngôn ngữ:** Tiếng Việt")
     st.write("**Voice-to-Text:** Google Speech Recognition")
